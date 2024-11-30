@@ -4,12 +4,14 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
-	"github.com/sandeep-jaiswar/engineering/common/config"
+	"github.com/sandeep-jaiswar/engineering/pkg/config"
+	"github.com/sandeep-jaiswar/engineering/pkg/db"
+	"github.com/sandeep-jaiswar/engineering/pkg/logger"
 	"go.uber.org/zap"
 )
 
 func main() {
-	logger, err := zap.NewProduction()
+	err := logger.InitLogger("debug", "development")
 	if err != nil {
 		panic("failed to initialize zap logger: " + err.Error())
 	}
@@ -17,16 +19,26 @@ func main() {
 
 	cfg, err := config.LoadConfig()
 	if err != nil {
-		logger.Error("Failed to load configuration")
+		logger.Logger.Error("Failed to load configuration")
 	}
 
-	logger.Info("Config: ",zap.String("AppName", cfg.AppName),zap.String("IamPort", cfg.IamPort))
+	logger.Logger.Info("Config: ", zap.String("AppName", cfg.AppName), zap.String("IamPort", cfg.IamPort))
+
+	client, err := db.Open(cfg.Database)
+	if err != nil {
+		logger.Logger.Panic("failed to connect to database: " + err.Error())
+	}
+	defer client.Close()
+
+	if err := db.Migrate(client); err != nil {
+		logger.Logger.Panic("failed to run migrations: " + err.Error())
+	}
 
 	r := gin.New()
 
 	r.Use(gin.Recovery())
 	r.Use(func(c *gin.Context) {
-		logger.Info("Incoming request",
+		logger.Logger.Info("Incoming request",
 			zap.String("method", c.Request.Method),
 			zap.String("path", c.Request.URL.Path),
 			zap.String("client_ip", c.ClientIP()),
@@ -36,12 +48,12 @@ func main() {
 
 	r.GET("/", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"message": "Hello World"})
-		logger.Info("Handled root endpoint",
+		logger.Logger.Info("Handled root endpoint",
 			zap.Int("status_code", http.StatusOK),
 		)
 	})
 
-	if err := r.Run(":"+cfg.IamPort); err != nil {
-		logger.Fatal("Failed to run server", zap.Error(err))
+	if err := r.Run(":" + cfg.IamPort); err != nil {
+		logger.Logger.Fatal("Failed to run server", zap.Error(err))
 	}
 }
